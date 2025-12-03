@@ -7,14 +7,10 @@ Blender add-on that adds a Sidebar panel for filtering and selecting vertex grou
 bl_info = {
     "name": "Vertex Group Filter Tool",
     "author": "Dar",
-    "version": (1, 7),
+    "version": (1, 8),
     "blender": (4, 5, 0),
-    "location": "View3D > Sidebar > Vertex Filter",
+    "location": "View3D > Sidebar > Group Tools",
     "description": "Filter vertex groups, select matches, batch-rename filtered names, and separate meshes",
-    "version": (1, 2),
-    "blender": (4, 5, 0),
-    "location": "View3D > Sidebar > Vertex Filter",
-    "description": "Filter vertex groups, select matches, and batch-rename filtered names",
     "category": "Mesh",
 }
 
@@ -61,10 +57,14 @@ class VGFILTER_Props(PropertyGroup):
     # UIList requires this to render the list
     active_index: bpy.props.IntProperty(default=0)
 
+    # Track last clicked index for range selection
+    last_clicked_index: bpy.props.IntProperty(default=-1)
+
 
 # -------------------------------------------------------------
 # HELPERS
 # -------------------------------------------------------------
+
 def _require_edit_mesh(context):
     obj = context.object
     if obj is None or obj.type != "MESH":
@@ -159,6 +159,7 @@ class VGFILTER_OT_Filter(Operator):
             item.selected = False
 
         props.active_index = 0
+        props.last_clicked_index = -1
         return {'FINISHED'}
 
 
@@ -171,6 +172,11 @@ class VGFILTER_OT_ToggleSelect(Operator):
     bl_options = {"UNDO"}
 
     item_index: bpy.props.IntProperty()
+    shift_select: bpy.props.BoolProperty(default=False)
+
+    def invoke(self, context, event):
+        self.shift_select = event.shift
+        return self.execute(context)
 
     @classmethod
     def poll(cls, context):
@@ -187,21 +193,38 @@ class VGFILTER_OT_ToggleSelect(Operator):
         if self.item_index < 0 or self.item_index >= len(props.filtered_groups):
             return {'CANCELLED'}
 
-        item = props.filtered_groups[self.item_index]
-        item.selected = not item.selected
+        range_select = self.shift_select and props.last_clicked_index >= 0
+        target_indices = [self.item_index]
+
+        if range_select:
+            start = min(props.last_clicked_index, self.item_index)
+            end = max(props.last_clicked_index, self.item_index)
+            target_indices = list(range(start, end + 1))
 
         start_mode, restore_mode = _preserve_mode(obj)
-        obj.vertex_groups.active_index = item.group_index
 
-        if item.selected:
-            bpy.ops.object.vertex_group_select()
-        else:
-            bpy.ops.object.vertex_group_deselect()
+        for idx in target_indices:
+            item = props.filtered_groups[idx]
+            desired_state = True if range_select else not item.selected
+
+            if desired_state == item.selected:
+                continue
+
+            item.selected = desired_state
+            obj.vertex_groups.active_index = item.group_index
+
+            if desired_state:
+                bpy.ops.object.vertex_group_select()
+            else:
+                bpy.ops.object.vertex_group_deselect()
 
         if start_mode:
             bpy.ops.object.mode_set(mode=start_mode)
 
         restore_mode()
+
+        # Remember the last clicked index for future shift selections
+        props.last_clicked_index = self.item_index
         return {'FINISHED'}
 
 
@@ -409,11 +432,11 @@ class VGFILTER_UL_List(UIList):
 # PANEL UI
 # -------------------------------------------------------------
 class VGFILTER_PT_Panel(Panel):
-    bl_label = "Vertex Group Filter"
+    bl_label = "Vertex Group Tools"
     bl_idname = "VGFILTER_PT_panel"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
-    bl_category = "Vertex Filter"
+    bl_category = "Group Tools"
 
     @classmethod
     def poll(cls, context):

@@ -7,12 +7,14 @@ Blender add-on that adds a Sidebar panel for filtering and selecting vertex grou
 bl_info = {
     "name": "Vertex Group Filter Tool",
     "author": "Dar",
-    "version": (1, 1),
+    "version": (1, 2),
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > Vertex Filter",
-    "description": "Filter vertex groups and select them manually or all at once",
+    "description": "Filter vertex groups, select matches, and batch-rename filtered names",
     "category": "Mesh",
 }
+
+import re
 
 import bpy
 from bpy.types import PropertyGroup, Operator, Panel, UIList
@@ -34,6 +36,12 @@ class VGFILTER_Props(PropertyGroup):
     filter_text: bpy.props.StringProperty(
         name="Filter",
         description="Filter vertex groups by name",
+        default="",
+    )
+
+    replacement_text: bpy.props.StringProperty(
+        name="Replace With",
+        description="Text to replace the filtered portion of each matched name",
         default="",
     )
 
@@ -184,6 +192,57 @@ class VGFILTER_OT_SelectAll(Operator):
 
 
 # -------------------------------------------------------------
+# REPLACE TEXT IN FILTERED NAMES
+# -------------------------------------------------------------
+class VGFILTER_OT_ReplaceInNames(Operator):
+    bl_idname = "vgfilter.replace_names"
+    bl_label = "Replace In Filtered Names"
+    bl_options = {"UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj is not None and obj.type == "MESH" and context.mode == "EDIT_MESH"
+
+    def execute(self, context):
+        props = context.scene.vgfilter_props
+        obj, error = _require_edit_mesh(context)
+        if error:
+            self.report({'WARNING'}, error)
+            return {'CANCELLED'}
+
+        search = props.filter_text.strip()
+        if not search:
+            self.report({'WARNING'}, "Enter a filter term to replace.")
+            return {'CANCELLED'}
+
+        replacement = props.replacement_text
+        pattern = re.compile(re.escape(search), re.IGNORECASE)
+
+        renamed = 0
+        for item in props.filtered_groups:
+            if item.group_index >= len(obj.vertex_groups):
+                continue
+
+            vg = obj.vertex_groups[item.group_index]
+            if not pattern.search(vg.name):
+                continue
+
+            new_name = pattern.sub(replacement, vg.name)
+            if new_name != vg.name:
+                vg.name = new_name
+                item.name = new_name
+                renamed += 1
+
+        if renamed == 0:
+            self.report({'INFO'}, "No filtered names contained the filter text.")
+        else:
+            self.report({'INFO'}, f"Renamed {renamed} vertex group(s).")
+
+        return {'FINISHED'}
+
+
+# -------------------------------------------------------------
 # UI LIST
 # -------------------------------------------------------------
 class VGFILTER_UL_List(UIList):
@@ -224,6 +283,9 @@ class VGFILTER_PT_Panel(Panel):
         layout.prop(props, "filter_text")
         layout.operator("vgfilter.filter", text="Filter")
 
+        layout.prop(props, "replacement_text")
+        layout.operator("vgfilter.replace_names", text="Replace In Names")
+
         layout.separator()
         layout.operator("vgfilter.select_all", text="Select ALL Matches")
 
@@ -250,6 +312,7 @@ classes = (
     VGFILTER_OT_Filter,
     VGFILTER_OT_ToggleSelect,
     VGFILTER_OT_SelectAll,
+    VGFILTER_OT_ReplaceInNames,
     VGFILTER_UL_List,
     VGFILTER_PT_Panel,
 )

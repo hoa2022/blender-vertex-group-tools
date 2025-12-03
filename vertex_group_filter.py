@@ -11,6 +11,10 @@ bl_info = {
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > Vertex Filter",
     "description": "Filter vertex groups, select matches, batch-rename filtered names, and separate meshes",
+    "version": (1, 2),
+    "blender": (4, 5, 0),
+    "location": "View3D > Sidebar > Vertex Filter",
+    "description": "Filter vertex groups, select matches, and batch-rename filtered names",
     "category": "Mesh",
 }
 

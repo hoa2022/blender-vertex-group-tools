@@ -3,6 +3,8 @@
 A Blender 4.5 add-on that adds a **Vertex Group Filter** panel to the 3D Viewport Sidebar.
 It lets you search vertex groups by full or partial name, select multiple matches, select
 all filtered groups at once, and batch-rename the filtered results.
+It lets you search vertex groups by full or partial name, select multiple matches, or
+select all filtered groups at once.
 
 ## Installation
 1. Open **Edit → Preferences → Add-ons → Install…**.
@@ -21,3 +23,4 @@ all filtered groups at once, and batch-rename the filtered results.
    object; the add-on cleans out unused vertex groups in each new object and removes only the
    separated groups from the original mesh when they no longer have assigned vertices, while
    honoring the naming preference above.
+4. Click items to toggle selection, or use **Select ALL Matches** to select every filtered group.

@@ -134,9 +134,6 @@ class VGFILTER_OT_ToggleSelect(Operator):
         item.selected = not item.selected
 
         start_mode, restore_mode = _preserve_mode(obj)
-
-        # Switch to Object Mode for selection operations, then restore
-        bpy.ops.object.mode_set(mode="OBJECT")
         obj.vertex_groups.active_index = item.group_index
 
         if item.selected:
@@ -172,11 +169,7 @@ class VGFILTER_OT_SelectAll(Operator):
             return {'CANCELLED'}
 
         start_mode, restore_mode = _preserve_mode(obj)
-        bpy.ops.object.mode_set(mode="OBJECT")
-
-        # Clear previous selection
-        for v in obj.data.vertices:
-            v.select = False
+        bpy.ops.mesh.select_all(action="DESELECT")
 
         for item in props.filtered_groups:
             item.selected = True

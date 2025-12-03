@@ -1,2 +1,15 @@
 # blender-vertex-group-tools
-a tool to give you more control over vertex groups in blender
+
+A Blender 4.5 add-on that adds a **Vertex Group Filter** panel to the 3D Viewport Sidebar.
+It lets you search vertex groups by full or partial name, select multiple matches, or
+select all filtered groups at once.
+
+## Installation
+1. Open **Edit → Preferences → Add-ons → Install…**.
+2. Choose `vertex_group_filter.py` from this repository and enable **Vertex Group Filter Tool**.
+
+## Usage
+1. Select a mesh object and enter **Edit Mode**.
+2. Open the **View3D Sidebar (N)** → **Vertex Filter** tab.
+3. Enter a search term and click **Filter** to populate the list.
+4. Click items to toggle selection, or use **Select ALL Matches** to select every filtered group.

@@ -1,7 +1,13 @@
+#!/usr/bin/env python3
 """
 Vertex Group Filter Tool
 -----------------------
 Blender add-on that adds a Sidebar panel for filtering and selecting vertex groups.
+ 
+Usage (Blender 4.5):
+- Save this file as ``vertex_group_filter.py``.
+- In Blender, open *Edit > Preferences > Add-ons*, click *Install...*, and choose this file.
+- Enable the add-on, then in Edit Mode on a mesh open *View3D Sidebar (N) > Group Tools > Vertex Group Tools*.
 """
 
 bl_info = {
@@ -18,6 +24,13 @@ import re
 
 import bpy
 import bmesh
+from bpy.props import (
+    BoolProperty,
+    CollectionProperty,
+    IntProperty,
+    PointerProperty,
+    StringProperty,
+)
 from bpy.types import PropertyGroup, Operator, Panel, UIList
 
 
@@ -25,40 +38,47 @@ from bpy.types import PropertyGroup, Operator, Panel, UIList
 # ITEM STRUCTURE
 # -------------------------------------------------------------
 class VGFILTER_Item(PropertyGroup):
-    name: bpy.props.StringProperty()
-    group_index: bpy.props.IntProperty()
-    selected: bpy.props.BoolProperty(default=False)
+    __slots__ = ()
+
+    name: StringProperty(name="Group Name")
+    group_index: IntProperty()
+    selected: BoolProperty(default=False)
 
 
 # -------------------------------------------------------------
 # TOOL PROPERTIES
 # -------------------------------------------------------------
 class VGFILTER_Props(PropertyGroup):
-    filter_text: bpy.props.StringProperty(
+    __slots__ = ()
+
+    filter_text: StringProperty(
         name="Filter",
         description="Filter vertex groups by name",
         default="",
     )
 
-    replacement_text: bpy.props.StringProperty(
+    replacement_text: StringProperty(
         name="Replace With",
         description="Text to replace the filtered portion of each matched name",
         default="",
     )
 
-    rename_separated_meshes: bpy.props.BoolProperty(
+    rename_separated_meshes: BoolProperty(
         name="Rename separated meshes",
         description="When separating, rename each new object and mesh data to the vertex group name",
         default=True,
     )
 
-    filtered_groups: bpy.props.CollectionProperty(type=VGFILTER_Item)
+    filtered_groups: CollectionProperty(type=VGFILTER_Item)
 
     # UIList requires this to render the list
-    active_index: bpy.props.IntProperty(default=0)
+    active_index: IntProperty(default=0)
 
     # Track last clicked index for range selection
-    last_clicked_index: bpy.props.IntProperty(default=-1)
+    last_clicked_index: IntProperty(default=-1)
+
+    # Track last filter match count for UI feedback
+    match_count: IntProperty(default=0)
 
 
 # -------------------------------------------------------------
@@ -77,14 +97,14 @@ def _require_edit_mesh(context):
 
 
 def _preserve_mode(obj):
-    """Return the current mode and helper to restore it."""
+    """Return a helper to restore the original object mode."""
     start_mode = obj.mode if obj is not None else None
 
     def restore():
         if start_mode and obj.mode != start_mode:
             bpy.ops.object.mode_set(mode=start_mode)
 
-    return start_mode, restore
+    return restore
 
 
 def _clean_vertex_groups(obj, keep_name=None, limit_to=None):
@@ -142,6 +162,7 @@ class VGFILTER_OT_Filter(Operator):
         obj = context.object
         props = context.scene.vgfilter_props
 
+        previous_selection = {item.name for item in props.filtered_groups if item.selected}
         props.filtered_groups.clear()
 
         filter_text = props.filter_text.strip().lower()
@@ -156,9 +177,10 @@ class VGFILTER_OT_Filter(Operator):
             item.name = vg.name
             # Need original index to re-activate correctly
             item.group_index = obj.vertex_groups[vg.name].index
-            item.selected = False
+            item.selected = vg.name in previous_selection
 
-        props.active_index = 0
+        props.match_count = len(props.filtered_groups)
+        props.active_index = 0 if props.filtered_groups else -1
         props.last_clicked_index = -1
         return {'FINISHED'}
 
@@ -171,8 +193,8 @@ class VGFILTER_OT_ToggleSelect(Operator):
     bl_label = "Toggle Group Selection"
     bl_options = {"UNDO"}
 
-    item_index: bpy.props.IntProperty()
-    shift_select: bpy.props.BoolProperty(default=False)
+    item_index: IntProperty()
+    shift_select: BoolProperty(default=False)
 
     def invoke(self, context, event):
         self.shift_select = event.shift
@@ -201,7 +223,7 @@ class VGFILTER_OT_ToggleSelect(Operator):
             end = max(props.last_clicked_index, self.item_index)
             target_indices = list(range(start, end + 1))
 
-        start_mode, restore_mode = _preserve_mode(obj)
+        restore_mode = _preserve_mode(obj)
 
         for idx in target_indices:
             item = props.filtered_groups[idx]
@@ -217,9 +239,6 @@ class VGFILTER_OT_ToggleSelect(Operator):
                 bpy.ops.object.vertex_group_select()
             else:
                 bpy.ops.object.vertex_group_deselect()
-
-        if start_mode:
-            bpy.ops.object.mode_set(mode=start_mode)
 
         restore_mode()
 
@@ -248,7 +267,7 @@ class VGFILTER_OT_SelectAll(Operator):
             self.report({'WARNING'}, error)
             return {'CANCELLED'}
 
-        start_mode, restore_mode = _preserve_mode(obj)
+        restore_mode = _preserve_mode(obj)
         bpy.ops.mesh.select_all(action="DESELECT")
 
         for item in props.filtered_groups:
@@ -256,8 +275,37 @@ class VGFILTER_OT_SelectAll(Operator):
             obj.vertex_groups.active_index = item.group_index
             bpy.ops.object.vertex_group_select()
 
-        if start_mode:
-            bpy.ops.object.mode_set(mode=start_mode)
+        restore_mode()
+        return {'FINISHED'}
+
+
+# -------------------------------------------------------------
+# SELECT NONE
+# -------------------------------------------------------------
+class VGFILTER_OT_SelectNone(Operator):
+    bl_idname = "vgfilter.select_none"
+    bl_label = "Select None"
+    bl_options = {"UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj is not None and obj.type == "MESH" and context.mode == "EDIT_MESH"
+
+    def execute(self, context):
+        props = context.scene.vgfilter_props
+        obj, error = _require_edit_mesh(context)
+        if error:
+            self.report({'WARNING'}, error)
+            return {'CANCELLED'}
+
+        restore_mode = _preserve_mode(obj)
+        bpy.ops.mesh.select_all(action="DESELECT")
+
+        for item in props.filtered_groups:
+            item.selected = False
+            obj.vertex_groups.active_index = item.group_index
+            bpy.ops.object.vertex_group_deselect()
 
         restore_mode()
         return {'FINISHED'}
@@ -420,11 +468,8 @@ class VGFILTER_UL_List(UIList):
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         row = layout.row(align=True)
 
-        # Highlight selected items
-        if item.selected:
-            row.alert = True
-
-        op = row.operator("vgfilter.toggle", text=item.name)
+        icon_id = "CHECKBOX_HLT" if item.selected else "BLANK1"
+        op = row.operator("vgfilter.toggle", text=item.name, icon=icon_id)
         op.item_index = index
 
 
@@ -447,20 +492,31 @@ class VGFILTER_PT_Panel(Panel):
         layout = self.layout
         props = context.scene.vgfilter_props
 
+        has_filtered = len(props.filtered_groups) > 0
+        has_selection = any(item.selected for item in props.filtered_groups)
+
         if context.mode != "EDIT_MESH":
             layout.label(text="Switch to Edit Mode to use the filter.", icon="INFO")
             return
 
         layout.prop(props, "filter_text")
         layout.operator("vgfilter.filter", text="Filter")
+        layout.label(text=f"{props.match_count} group(s) matched")
 
         layout.prop(props, "replacement_text")
-        layout.operator("vgfilter.replace_names", text="Replace In Names")
+        replace_row = layout.row()
+        replace_row.enabled = has_filtered and bool(props.filter_text.strip())
+        replace_row.operator("vgfilter.replace_names", text="Replace In Names")
 
         layout.separator()
-        layout.operator("vgfilter.select_all", text="Select ALL Matches")
+        select_row = layout.row(align=True)
+        select_row.enabled = has_filtered
+        select_row.operator("vgfilter.select_all", text="Select ALL Matches")
+        select_row.operator("vgfilter.select_none", text="Select None")
         layout.prop(props, "rename_separated_meshes")
-        layout.operator("vgfilter.separate_selected", text="Separate Selected Groups")
+        separate_row = layout.row()
+        separate_row.enabled = has_selection
+        separate_row.operator("vgfilter.separate_selected", text="Separate Selected Groups")
 
         layout.separator()
         layout.label(text="Filtered Vertex Groups:")
@@ -485,6 +541,7 @@ classes = (
     VGFILTER_OT_Filter,
     VGFILTER_OT_ToggleSelect,
     VGFILTER_OT_SelectAll,
+    VGFILTER_OT_SelectNone,
     VGFILTER_OT_ReplaceInNames,
     VGFILTER_OT_SeparateSelected,
     VGFILTER_UL_List,
@@ -496,7 +553,7 @@ def register():
     for c in classes:
         bpy.utils.register_class(c)
 
-    bpy.types.Scene.vgfilter_props = bpy.props.PointerProperty(type=VGFILTER_Props)
+    bpy.types.Scene.vgfilter_props = PointerProperty(type=VGFILTER_Props)
 
 
 def unregister():
